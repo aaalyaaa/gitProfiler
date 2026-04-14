@@ -17,4 +17,5 @@ Imports:
     duckdb,
     gert,
     lubridate,
-    tools
+    tools,
+    magrittr
