@@ -180,11 +180,17 @@ parse_commit <- function(block, repo_id) {
 
       added <- code_lines[startsWith(code_lines, "+")]
       added <- added[!startsWith(added, "+++")]
-      added_code <- paste(substr(added, 2, nchar(added)), collapse = "\n")
+      added <- trimws(substr(added, 2, nchar(added)))
+      added <- added[added != ""]
+      added_code <- paste(added, collapse = "\n")
+      added_code <- gsub(" +\n", "\n", added_code)
 
       deleted <- code_lines[startsWith(code_lines, "-")]
       deleted <- deleted[!startsWith(deleted, "---")]
-      deleted_code <- paste(substr(deleted, 2, nchar(deleted)), collapse = "\n")
+      deleted <- trimws(substr(deleted, 2, nchar(deleted)))
+      deleted <- deleted[deleted != ""]
+      deleted_code <- paste(deleted, collapse = "\n")
+      deleted_code <- gsub(" +\n", "\n", deleted_code)
 
       results[[length(results) + 1]] <- data.frame(
         repo_id = repo_id,
