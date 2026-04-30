@@ -18,4 +18,5 @@ Imports:
     gert,
     lubridate,
     tools,
-    magrittr
+    magrittr,
+    httr
