@@ -8,7 +8,7 @@ refresh_developer_metrics <- function(conn) {
   }
   DBI::dbExecute(conn, "DROP TABLE IF EXISTS developer_metrics")
   DBI::dbExecute(conn, "DROP TABLE IF EXISTS developer_languages")
-  
+
   DBI::dbExecute(conn, "
     CREATE TABLE developer_metrics (
       author_name VARCHAR PRIMARY KEY,
@@ -35,19 +35,19 @@ refresh_developer_metrics <- function(conn) {
       language_count INTEGER
     )
   ")
-  
+
   lang_whitelist <- c(
-    "c", "cpp", "cs", "java", "py", "go", "rb", "rs", "r", "js", "ts", 
-    "jsx", "tsx", "php", "scala", "kt", "swift", "dart", "lua", "sql", 
-    "html", "css", "scss", "R", "Rmd", "jl", "ex", "exs", "erl", "hrl", 
+    "c", "cpp", "cs", "java", "py", "go", "rb", "rs", "r", "js", "ts",
+    "jsx", "tsx", "php", "scala", "kt", "swift", "dart", "lua", "sql",
+    "html", "css", "scss", "R", "Rmd", "jl", "ex", "exs", "erl", "hrl",
     "m", "mm", "groovy", "nim", "zig", "v", "odin"
   )
   whitelist_str <- paste0("('", paste(lang_whitelist, collapse = "','"), "')")
-  
+
   query <- sprintf("
-    WITH 
+    WITH
     base AS (
-      SELECT 
+      SELECT
         author_name,
         COUNT(DISTINCT commit) AS total_commits,
         COUNT(DISTINCT repo) AS repos_count,
@@ -61,7 +61,7 @@ refresh_developer_metrics <- function(conn) {
       GROUP BY author_name
     ),
     code_changes AS (
-      SELECT 
+      SELECT
         c.author_name,
         SUM(d.count_add) AS total_added,
         SUM(d.count_del) AS total_deleted,
@@ -74,11 +74,11 @@ refresh_developer_metrics <- function(conn) {
       GROUP BY c.author_name
     ),
     commit_gaps AS (
-      SELECT 
+      SELECT
         author_name,
         AVG(gap_hours) AS avg_time_between_commits
       FROM (
-        SELECT 
+        SELECT
           author_name,
           date AS commit_date,
           LAG(date) OVER (PARTITION BY author_name ORDER BY date) AS prev_date,
@@ -89,12 +89,12 @@ refresh_developer_metrics <- function(conn) {
       GROUP BY author_name
     ),
     monthly_trend AS (
-      SELECT 
+      SELECT
         author_name,
         SUM(CASE WHEN month = current_month THEN commits ELSE 0 END) AS current_month_commits,
         SUM(CASE WHEN month = current_month - INTERVAL '1' MONTH THEN commits ELSE 0 END) AS prev_month_commits
       FROM (
-        SELECT 
+        SELECT
           author_name,
           DATE_TRUNC('month', date) AS month,
           COUNT(*) AS commits,
@@ -105,13 +105,13 @@ refresh_developer_metrics <- function(conn) {
       GROUP BY author_name
     ),
     lang_stats AS (
-      SELECT 
+      SELECT
         author_name,
         MAX(CASE WHEN lang_rank = 1 THEN file_extension END) AS primary_language,
         MAX(CASE WHEN lang_rank = 2 THEN file_extension END) AS secondary_language,
         COUNT(DISTINCT file_extension) AS language_count
       FROM (
-        SELECT 
+        SELECT
           c.author_name,
           d.file_extension,
           COUNT(*) AS cnt,
@@ -125,7 +125,7 @@ refresh_developer_metrics <- function(conn) {
       GROUP BY author_name
     ),
     author_repo_total AS (
-      SELECT 
+      SELECT
         c.author_name,
         SUM(repo_stats.total_commits_in_repo) AS total_commits_in_my_repos
       FROM (
@@ -140,7 +140,7 @@ refresh_developer_metrics <- function(conn) {
       GROUP BY c.author_name
     )
     INSERT INTO developer_metrics
-    SELECT 
+    SELECT
       b.author_name,
       b.total_commits,
       b.active_days,
@@ -170,18 +170,18 @@ refresh_developer_metrics <- function(conn) {
     LEFT JOIN lang_stats ls ON b.author_name = ls.author_name
     LEFT JOIN author_repo_total art ON b.author_name = art.author_name
   ", whitelist_str)
-  
+
   DBI::dbExecute(conn, query)
-  
+
   DBI::dbExecute(conn, sprintf("
     CREATE TABLE developer_languages AS
-    SELECT 
+    SELECT
       author_name,
       file_extension,
       COUNT(*) AS file_changes,
       ROW_NUMBER() OVER (PARTITION BY author_name ORDER BY COUNT(*) DESC) AS lang_rank
     FROM (
-      SELECT 
+      SELECT
         c.author_name,
         d.file_extension
       FROM git_commit_history c
@@ -191,7 +191,7 @@ refresh_developer_metrics <- function(conn) {
     ) t
     GROUP BY author_name, file_extension
   ", whitelist_str))
-  
+
   message("Таблица developer_metrics обновлена, developer_languages создана")
   invisible(TRUE)
 }
@@ -209,7 +209,7 @@ get_developer_stats <- function(conn, username = NULL) {
 get_summary_stats <- function(conn) {
   if (missing(conn) || is.null(conn)) return(git_error("invalid_argument", "conn не может быть NULL"))
   overview <- DBI::dbGetQuery(conn, "
-    SELECT 
+    SELECT
       COUNT(*) AS total_developers,
       SUM(total_commits) AS total_commits,
       MIN(first_commit) AS first_commit,
