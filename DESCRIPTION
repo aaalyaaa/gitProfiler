@@ -11,14 +11,15 @@ Description: Provides tools for extracting and analyzing Git repository data,
     and generating team metrics. Designed for HR and team leads to
     objectively evaluate developer contributions and optimize team composition.
 License: MIT + file LICENSE
-Encoding: UTF-8
-Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
 Imports:
     DBI,
     dplyr,
     duckdb,
     ggplot2,
+    shiny,
+    bslib,
+    plotly,
+    DT,
     lubridate,
     magrittr,
     solitude,
@@ -37,3 +38,6 @@ Suggests:
     knitr,
     rmarkdown,
     pkgdown
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
