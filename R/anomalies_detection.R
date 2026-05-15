@@ -1,25 +1,24 @@
-# anomalies_detection.R
-# Общие утилиты, обнаружение аномалий и их HR‑форматирование
-
-git_error <- function(class, message, ...) {
-  structure(list(message = message, ...), class = c(class, "error", "condition"))
-}
-
-`%||%` <- function(x, y) if (is.null(x)) y else x
-
-is_git_error <- function(x) inherits(x, "error")
-
-stop_if_error <- function(x, msg = NULL) {
-  if (is_git_error(x)) {
-    stop(if (is.null(msg)) x$message else paste(msg, x$message, sep = ": "))
+#' @export
+ensure_metrics_exist <- function(conn) {
+  tables <- tryCatch(
+    DBI::dbGetQuery(conn, "SELECT name FROM sqlite_master WHERE type='table' AND name='developer_metrics'"),
+    error = function(e) data.frame()
+  )
+  if (nrow(tables) == 0) {
+    message("Таблица developer_metrics не найдена. Вызов refresh_developer_metrics()...")
+    res <- refresh_developer_metrics(conn)
+    if (is_git_error(res)) return(res)
   }
-  return(x)
+  invisible(TRUE)
 }
-
-get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL, until = NULL) {
+#' @export
+get_all_anomalies <- function(conn, username = NULL, limit = Inf, since = NULL, until = NULL, repo_id = NULL) {
   if (missing(conn) || is.null(conn)) {
     return(git_error("invalid_argument", "conn не может быть NULL"))
   }
+  
+  metrics_ok <- ensure_metrics_exist(conn)
+  if (is_git_error(metrics_ok)) return(metrics_ok)
   
   result <- data.frame()
   errors <- list()
@@ -29,6 +28,7 @@ get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL,
       sprintf("AND author_name LIKE '%%%s%%'", username) else ""
     if (!is.null(since)) where_part <- paste0(where_part, " AND date >= '", since, "'")
     if (!is.null(until)) where_part <- paste0(where_part, " AND date <= '", until, "'")
+    if (!is.null(repo_id)) where_part <- paste0(where_part, " AND repo_id = ", repo_id)
     sql <- sprintf(sql_template, where_part)
     
     res <- tryCatch(
@@ -42,6 +42,7 @@ get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL,
     return(res)
   }
   
+  # 1. Ночные коммиты
   night_sql <- "
     SELECT author_name, date, 'night_commit' as anomaly_type,
            'Коммит в нерабочее время (ночь)' as description
@@ -51,6 +52,7 @@ get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL,
   night <- safe_query(night_sql, "night_commits")
   if (nrow(night) > 0) result <- rbind(result, night)
   
+  # 2. Выходные
   weekend_sql <- "
     SELECT author_name, date, 'weekend_commit' as anomaly_type,
            'Коммит в выходной день' as description
@@ -60,6 +62,7 @@ get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL,
   weekend <- safe_query(weekend_sql, "weekend_commits")
   if (nrow(weekend) > 0) result <- rbind(result, weekend)
   
+  # 3. Большие коммиты (>500 строк)
   large_sql <- "
     SELECT c.author_name, c.date, 'large_commit' as anomaly_type,
            CONCAT('Изменено ', SUM(d.count_add + d.count_del), ' строк') as description
@@ -72,6 +75,7 @@ get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL,
   large <- safe_query(large_sql, "large_commits")
   if (nrow(large) > 0) result <- rbind(result, large)
   
+  # 4. Длинные перерывы (>7 дней)
   break_sql <- "
     WITH commit_dates AS (
       SELECT author_name, CAST(date AS DATE) as commit_date,
@@ -90,6 +94,7 @@ get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL,
   long_break <- safe_query(break_sql, "long_breaks")
   if (nrow(long_break) > 0) result <- rbind(result, long_break)
   
+  # 5. Пустые сообщения (<3 символов)
   empty_sql <- "
     SELECT author_name, date, 'empty_message' as anomaly_type,
            'Коммит без содержательного сообщения' as description
@@ -99,27 +104,6 @@ get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL,
   empty <- safe_query(empty_sql, "empty_messages")
   if (nrow(empty) > 0) result <- rbind(result, empty)
   
-  pattern_sql <- "
-    WITH monthly_stats AS (
-      SELECT author_name, DATE_TRUNC('month', date) as month, COUNT(*) as commits_per_month
-      FROM git_commit_history
-      WHERE 1=1 %s
-      GROUP BY author_name, DATE_TRUNC('month', date)
-    ),
-    changes AS (
-      SELECT author_name, month, commits_per_month,
-             LAG(commits_per_month) OVER (PARTITION BY author_name ORDER BY month) as prev_commits
-      FROM monthly_stats
-    )
-    SELECT author_name, month as date, 'pattern_change' as anomaly_type,
-           CONCAT('Активность изменилась с ', prev_commits, ' на ', commits_per_month, ' коммитов') as description
-    FROM changes
-    WHERE prev_commits IS NOT NULL 
-      AND (commits_per_month > prev_commits * 2 OR commits_per_month < prev_commits / 2)
-      AND ABS(commits_per_month - prev_commits) >= 10
-  "
-  pattern <- safe_query(pattern_sql, "pattern_changes")
-  if (nrow(pattern) > 0) result <- rbind(result, pattern)
   
   if (nrow(result) == 0 && length(errors) > 0) {
     return(errors[[1]])
@@ -128,9 +112,9 @@ get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL,
   if (nrow(result) > 0) {
     result$anomaly_id <- 1:nrow(result)
     result <- result[order(result$author_name, result$date), ]
-    if (!is.null(limit) && limit > 0 && nrow(result) > limit) {
-      result <- result[1:limit, ]
+    if (is.finite(limit) && limit > 0 && nrow(result) > limit) {
       cat(sprintf("Предупреждение: общее число аномалий превышает лимит (%d). Возвращены первые %d.\n", nrow(result), limit))
+      result <- result[1:limit, ]
     }
   }
   
@@ -138,29 +122,59 @@ get_all_anomalies <- function(conn, username = NULL, limit = 1000, since = NULL,
   cat(sprintf("\n Найдено rule‑аномалий: %d\n", nrow(result)))
   return(result)
 }
-
-#' Кеширование всех аномалий (rule + ML) в таблицу anomalies
-cache_anomalies <- function(conn, ml_threshold = 0.95, since = NULL, until = NULL) {
+get_user_anomalies <- function(conn, author_name) {
+  author_esc <- gsub("'", "''", author_name)
+  DBI::dbGetQuery(conn, sprintf("
+    SELECT anomaly_type, date, description,
+    FROM anomalies
+    WHERE author_name = '%s'
+    ORDER BY date
+  ", author_esc))
+}
+#' @export
+cache_anomalies <- function(conn, score_threshold = 0.7, since = NULL, until = NULL, min_commits = 10, repo_id = NULL) {
   if (missing(conn) || is.null(conn)) return(git_error("invalid_argument", "conn не может быть NULL"))
   
-  rule_anom <- get_all_anomalies(conn, since = since, until = until)
+  rule_anom <- get_all_anomalies(conn, since = since, until = until, limit = Inf, repo_id = repo_id)
   if (is_git_error(rule_anom)) return(rule_anom)
   
-  ml_anom <- tryCatch(
-    get_ml_anomalies(conn, threshold = ml_threshold, since = since, until = until),
-    error = function(e) data.frame()
-  )
+  where_date <- ""
+  if (!is.null(since)) where_date <- paste0(where_date, " AND date >= '", since, "'")
+  if (!is.null(until)) where_date <- paste0(where_date, " AND date <= '", until, "'")
+  if (!is.null(repo_id)) where_date <- paste0(where_date, " AND repo_id = ", repo_id)
   
-  if (!is_git_error(ml_anom) && nrow(ml_anom) > 0) {
-    ml_anom$anomaly_type <- "ml_anomaly"
-    ml_anom$description <- ml_anom$explanation
-    ml_anom$anomaly_id <- NA
-    ml_anom <- ml_anom[, c("author_name", "date", "anomaly_type", "description", "anomaly_id")]
-  } else {
-    ml_anom <- data.frame()
+  authors_query <- sprintf("
+    SELECT author_name, COUNT(*) as n
+    FROM git_commit_history
+    WHERE 1=1 %s
+    GROUP BY author_name
+  ", where_date)
+  authors <- DBI::dbGetQuery(conn, authors_query)
+  
+  all_ml_anom <- data.frame()
+  
+  for (i in seq_len(nrow(authors))) {
+    auth <- authors$author_name[i]
+    ncom <- authors$n[i]
+    if (ncom < min_commits) {
+      cat(sprintf("Автор %s: только %d коммитов, пропускаем ML-аномалии\n", auth, ncom))
+      next
+    }
+    ml <- tryCatch(
+      get_ml_anomalies(conn, author_name = auth, score_threshold = score_threshold,
+                       since = since, until = until, return_features = FALSE, repo_id = repo_id),
+      error = function(e) data.frame()
+    )
+    if (is.data.frame(ml) && nrow(ml) > 0) {
+      ml$anomaly_type <- "ml_anomaly"
+      ml$description <- ml$explanation
+      ml$anomaly_id <- NA
+      ml <- ml[, c("author_name", "date", "anomaly_type", "description", "anomaly_id")]
+      all_ml_anom <- rbind(all_ml_anom, ml)
+    }
   }
   
-  all_anom <- rbind(rule_anom, ml_anom)
+  all_anom <- rbind(rule_anom, all_ml_anom)
   if (nrow(all_anom) > 0) {
     all_anom$anomaly_id <- 1:nrow(all_anom)
     DBI::dbExecute(conn, "DROP TABLE IF EXISTS anomalies")
@@ -171,14 +185,14 @@ cache_anomalies <- function(conn, ml_threshold = 0.95, since = NULL, until = NUL
   }
   invisible(TRUE)
 }
-
-#' Частые правки одного файла (>10 раз в день)
-get_frequent_file_edits <- function(conn, username = NULL, since = NULL, until = NULL, threshold = 10) {
+#' @export
+get_frequent_file_edits <- function(conn, username = NULL, since = NULL, until = NULL, threshold = 10, repo_id = NULL) {
   if (missing(conn) || is.null(conn)) return(git_error("invalid_argument", "conn не может быть NULL"))
   where <- ""
   if (!is.null(username)) where <- paste0(where, " AND c.author_name LIKE '%%", username, "%%'")
   if (!is.null(since)) where <- paste0(where, " AND c.date >= '", since, "'")
   if (!is.null(until)) where <- paste0(where, " AND c.date <= '", until, "'")
+  if (!is.null(repo_id)) where <- paste0(where, " AND c.repo_id = ", repo_id)
   if (where != "") where <- paste0("WHERE 1=1", where) else where <- "WHERE 1=1"
   
   query <- sprintf("
@@ -206,74 +220,50 @@ get_frequent_file_edits <- function(conn, username = NULL, since = NULL, until =
   names(agg) <- c("author_name", "days_with_frequent_edits")
   return(agg)
 }
-
-#' Статистика по типам аномалий
-get_anomaly_stats <- function(anomalies) {
-  if (missing(anomalies)) return(git_error("invalid_argument", "anomalies не может быть пропущен"))
-  if (is_git_error(anomalies)) return(anomalies)
-  if (nrow(anomalies) == 0) return(data.frame(anomaly_type = character(), count = numeric()))
-  stats <- aggregate(anomaly_id ~ anomaly_type, data = anomalies, FUN = length)
+#' @export
+get_anomaly_stats <- function(conn = NULL, author_name = NULL, since = NULL, until = NULL, repo_id = NULL, anomalies = NULL) {
+  # Если передан data.frame anomalies – используем его (старый режим)
+  if (!is.null(anomalies)) {
+    if (is_git_error(anomalies)) return(anomalies)
+    if (nrow(anomalies) == 0) return(data.frame(anomaly_type = character(), count = numeric(), percentage = numeric()))
+    stats <- aggregate(anomaly_id ~ anomaly_type, data = anomalies, FUN = length)
+    names(stats) <- c("anomaly_type", "count")
+    stats <- stats[order(-stats$count), ]
+    stats$percentage <- round(100 * stats$count / sum(stats$count), 2)
+    return(stats)
+  }
+  
+  if (missing(conn) || is.null(conn)) {
+    return(git_error("invalid_argument", "conn не может быть NULL, если не передан anomalies"))
+  }
+  
+  tables <- DBI::dbGetQuery(conn, "SELECT name FROM sqlite_master WHERE type='table' AND name='anomalies'")
+  if (nrow(tables) == 0) {
+    return(git_error("no_table", "Таблица anomalies не найдена. Вызовите cache_anomalies() сначала."))
+  }
+  
+  where_clauses <- c()
+  if (!is.null(author_name)) {
+    where_clauses <- c(where_clauses, sprintf("author_name = '%s'", gsub("'", "''", author_name)))
+  }
+  if (!is.null(since)) {
+    where_clauses <- c(where_clauses, sprintf("date >= '%s'", since))
+  }
+  if (!is.null(until)) {
+    where_clauses <- c(where_clauses, sprintf("date <= '%s'", until))
+  }
+  
+  where_sql <- if (length(where_clauses) > 0) paste("WHERE", paste(where_clauses, collapse = " AND ")) else ""
+  query <- sprintf("SELECT anomaly_type, anomaly_id FROM anomalies %s", where_sql)
+  df <- DBI::dbGetQuery(conn, query)
+  
+  if (nrow(df) == 0) {
+    return(data.frame(anomaly_type = character(), count = numeric(), percentage = numeric()))
+  }
+  
+  stats <- aggregate(anomaly_id ~ anomaly_type, data = df, FUN = length)
   names(stats) <- c("anomaly_type", "count")
   stats <- stats[order(-stats$count), ]
   stats$percentage <- round(100 * stats$count / sum(stats$count), 2)
   return(stats)
-}
-
-#' Топ разработчиков по количеству аномалий
-get_top_anomaly_developers <- function(anomalies, n = 5) {
-  if (missing(anomalies)) return(git_error("invalid_argument", "anomalies не может быть пропущен"))
-  if (is_git_error(anomalies)) return(anomalies)
-  if (nrow(anomalies) == 0) return(data.frame(author_name = character(), anomaly_count = numeric()))
-  top <- aggregate(anomaly_id ~ author_name, data = anomalies, FUN = length)
-  names(top) <- c("author_name", "anomaly_count")
-  top <- top[order(-top$anomaly_count), ]
-  return(head(top, n))
-}
-
-#' HR‑форматирование аномалий (без параметра period)
-format_anomalies_for_hr <- function(rule_anomalies, ml_anomalies = NULL, frequent_edits = NULL) {
-  work_pattern <- list()
-  work_quality <- list()
-  
-  night_count <- if (!is.null(rule_anomalies) && nrow(rule_anomalies) > 0) {
-    sum(rule_anomalies$anomaly_type == "night_commit", na.rm = TRUE)
-  } else 0
-  work_pattern$nights <- if (night_count > 0) paste0("работает по ночам (", night_count, " раз)") else "не коммитит по ночам"
-  
-  weekend_count <- if (!is.null(rule_anomalies) && nrow(rule_anomalies) > 0) {
-    sum(rule_anomalies$anomaly_type == "weekend_commit", na.rm = TRUE)
-  } else 0
-  work_pattern$weekends <- if (weekend_count > 0) paste0("коммитит в выходные (", weekend_count, " раз)") else "не работает в выходные"
-  
-  breaks <- if (!is.null(rule_anomalies) && nrow(rule_anomalies) > 0) {
-    rule_anomalies[rule_anomalies$anomaly_type == "long_break", ]
-  } else data.frame()
-  if (nrow(breaks) > 0) {
-    max_break <- max(as.numeric(gsub("\\D", "", breaks$description)), na.rm = TRUE)
-    break_months <- format(as.Date(breaks$date), "%B")
-    max_break_month <- break_months[which.max(as.numeric(gsub("\\D", "", breaks$description)))]
-    work_pattern$breaks <- paste0("был перерыв ", max_break, " дней в ", max_break_month)
-  } else {
-    work_pattern$breaks <- "нет длинных перерывов"
-  }
-  
-  large_count <- if (!is.null(rule_anomalies) && nrow(rule_anomalies) > 0) {
-    sum(rule_anomalies$anomaly_type == "large_commit", na.rm = TRUE)
-  } else 0
-  work_quality$large_commits <- if (large_count > 0) paste0(large_count, " очень больших коммита (>500 строк)") else "нет очень больших коммитов"
-  
-  empty_count <- if (!is.null(rule_anomalies) && nrow(rule_anomalies) > 0) {
-    sum(rule_anomalies$anomaly_type == "empty_message", na.rm = TRUE)
-  } else 0
-  work_quality$empty_messages <- if (empty_count > 0) paste0(empty_count, " коммитов без содержательного сообщения") else "все коммиты имеют сообщения"
-  
-  freq_days <- if (!is.null(frequent_edits) && nrow(frequent_edits) > 0) {
-    sum(frequent_edits$days_with_frequent_edits, na.rm = TRUE)
-  } else 0
-  work_quality$frequent_edits <- if (freq_days > 0) paste0(freq_days, " дней с частыми правками одного файла (>10 раз/день)") else "нет дней с частыми правками одного файла"
-  
-  ml_count <- if (!is.null(ml_anomalies) && nrow(ml_anomalies) > 0) nrow(ml_anomalies) else 0
-  work_quality$ml_anomalies <- if (ml_count > 0) paste0(ml_count, " коммитов с необычными паттернами") else "нет необычных паттернов коммитов"
-  
-  list(work_pattern = work_pattern, work_quality = work_quality)
 }
