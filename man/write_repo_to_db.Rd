@@ -17,5 +17,7 @@ write_repo_to_db(con, repo_name, repo_path)
 Invisibly returns number of new commits written
 }
 \description{
-Write data to database
+Writes commit history and file changes to the DuckDB database.
+Supports incremental updates by only adding new commits when the
+repository already exists in the database.
 }

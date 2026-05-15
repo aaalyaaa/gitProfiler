@@ -21,3 +21,9 @@ Removes all data associated with a repository from all tables:
 \item repo_path
 }
 }
+\examples{
+\dontrun{
+delete_repository("dbipAnalyzer")
+}
+
+}

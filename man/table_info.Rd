@@ -19,3 +19,9 @@ A data frame with column information
 \description{
 Returns the schema of a table: column names, data types, and nullability.
 }
+\examples{
+\dontrun{
+table_info("git_commit_history")
+}
+
+}

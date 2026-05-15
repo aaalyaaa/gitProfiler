@@ -17,5 +17,6 @@ repo_id(con, repo_name, repo_path)
 Repository ID (integer)
 }
 \description{
-Get or create repository ID
+Retrieves the numeric ID for a repository from the repo_path table.
+If the repository doesn't exist, creates a new entry with a new ID.
 }

@@ -16,5 +16,7 @@ Data frame with columns:
 commit, src_file, dst_file, start_del, count_del, start_add, count_add, added_code, deleted_code
 }
 \description{
-Parse a single commit block into a data frame of changes
+Parses one commit block from \verb{git log -p} output and extracts detailed
+change information including file names, line numbers, added code,
+deleted code, and file extensions.
 }

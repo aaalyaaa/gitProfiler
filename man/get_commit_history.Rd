@@ -17,5 +17,17 @@ get_commit_history(repo_path, repo_id, since = NULL)
 Data frame with commit history
 }
 \description{
-Get commit history from a Git repository
+Extracts commit history from a local Git repository using \verb{git log} with
+custom formatting. Returns a data frame with commit hashes, parent hashes,
+author names, dates, and messages. Supports incremental loading via the
+\code{since} parameter for efficient database updates.
+}
+\examples{
+\dontrun{
+# All commits
+commits <- get_commit_history("D:/repos/my_project", repo_id = 1)
+
+# Only commits after specific hash
+commits <- get_commit_history("D:/repos/my_project", repo_id = 1, since = "abc123")
+}
 }

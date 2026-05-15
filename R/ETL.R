@@ -2,11 +2,35 @@
 NULL
 #' Clone or update a Git repository
 #'
+#' Prepares a Git repository for analysis by cloning from GitHub or updating
+#' an existing local copy. Performs comprehensive input validation and handles
+#' both local and remote operation modes with appropriate error messages.
+#'
+#' **Local mode (mode = 0):** Uses an existing local Git repository. Validates
+#' that the path exists and contains a `.git` directory, then runs `git pull`.
+#'
+#' **Remote mode (mode = 1):** Clones a repository from GitHub. Validates the
+#' URL format, normalizes it (adds `.git` if missing), checks repository
+#' accessibility via `git ls-remote`, then clones or updates as needed.
+#'
 #' @param mode 0 = local, 1 = remote
 #' @param repo_url GitHub URL (for mode = 1)
 #' @param clone_dir Where to clone (for mode = 1)
 #' @param local_path Path to local repo (for mode = 0)
 #' @return Path to repository
+#'
+#' #' @examples
+#' \dontrun{
+#' # Local mode
+#' repo_path <- clone_or_pull(mode = 0, local_path = "D:/my_repos/project")
+#'
+#' # Remote mode
+#' repo_path <- clone_or_pull(
+#'   mode = 1,
+#'   repo_url = "https://github.com/aaalyaaa/dbipAnalyzer.git",
+#'   clone_dir = "D:/repos"
+#' )
+#' }
 clone_or_pull <- function(mode, repo_url = NULL, clone_dir = NULL, local_path = NULL) {
 
   git_error <- function(class, message, ...) {
@@ -83,10 +107,20 @@ clone_or_pull <- function(mode, repo_url = NULL, clone_dir = NULL, local_path = 
 
 #' Get repository metadata from GitHub API
 #'
+#' Retrieves metadata about a GitHub repository including stars, forks, language,
+#' description, license, and timestamps. Makes two API calls (main endpoint and
+#' languages endpoint). Rate limits: 60/hour without token, 5000/hour with token.
+#'
 #' @param owner Repository owner (username or organization)
 #' @param repo Repository name
 #' @param token GitHub personal access token (optional, for higher rate limits)
 #' @return List with repository metadata
+#'
+#' @examples
+#' \dontrun{
+#' metadata <- get_repo_metadata("aaalyaaa", "dbipAnalyzer")
+#' cat("Stars:", metadata$stars)
+#' }
 get_repo_metadata <- function(owner, repo, token = NULL) {
   url <- sprintf("https://api.github.com/repos/%s/%s", owner, repo)
 
@@ -136,10 +170,24 @@ get_repo_metadata <- function(owner, repo, token = NULL) {
 
 #' Get commit history from a Git repository
 #'
+#' Extracts commit history from a local Git repository using `git log` with
+#' custom formatting. Returns a data frame with commit hashes, parent hashes,
+#' author names, dates, and messages. Supports incremental loading via the
+#' `since` parameter for efficient database updates.
+#'
 #' @param repo_path Path to local Git repository
 #' @param repo_id Numeric ID of the repository
 #' @param since Optional: only commits after this commit hash
 #' @return Data frame with commit history
+#'
+#' @examples
+#' \dontrun{
+#' # All commits
+#' commits <- get_commit_history("D:/repos/my_project", repo_id = 1)
+#'
+#' # Only commits after specific hash
+#' commits <- get_commit_history("D:/repos/my_project", repo_id = 1, since = "abc123")
+#' }
 get_commit_history <- function(repo_path, repo_id, since = NULL) {
   # %H - хэш коммита
   # %P - хэш родительского коммита
@@ -188,6 +236,10 @@ get_commit_history <- function(repo_path, repo_id, since = NULL) {
 
 #' Parse git log -p output into commit blocks
 #'
+#' Reads the output of `git log -p` and splits it into blocks, where each block
+#' represents one commit with its complete diff information. This is the first
+#' step before parsing individual commits for code changes.
+#'
 #' @param repo_path Path to local Git repository
 #' @return List of character vectors, each vector is one commit block
 get_commits <- function(repo_path) {
@@ -234,6 +286,10 @@ parse_hunk_line <- function(line) {
 }
 
 #' Parse a single commit block into a data frame of changes
+#'
+#' Parses one commit block from `git log -p` output and extracts detailed
+#' change information including file names, line numbers, added code,
+#' deleted code, and file extensions.
 #'
 #' @param block Character vector representing one commit (from get_commits())
 #' @param repo_id Numeric ID of the repository
@@ -380,6 +436,13 @@ parse_commit <- function(block, repo_id) {
 #'
 #' @param db_path Path to DuckDB file (default: "git.duckdb")
 #' @return Database connection object
+#'
+#' @examples
+#' \dontrun{
+#' con <- init_db("my_data.duckdb")
+#' DBI::dbListTables(con)
+#' DBI::dbDisconnect(con, shutdown = TRUE)
+#' }
 init_db <- function(db_path = "git.duckdb") {
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
 
@@ -447,6 +510,9 @@ init_db <- function(db_path = "git.duckdb") {
 
 #' Get or create repository ID
 #'
+#' Retrieves the numeric ID for a repository from the repo_path table.
+#' If the repository doesn't exist, creates a new entry with a new ID.
+#'
 #' @param con Database connection (from init_db)
 #' @param repo_name Name of the repository
 #' @param repo_path Path to the repository
@@ -480,11 +546,24 @@ repo_id <- function(con, repo_name, repo_path) {
 
 #' Save repository metadata to database
 #'
+#' Fetches repository metadata from GitHub API and saves it to the
+#' repo_metadata table. Updates existing records if the repository
+#' already exists.
+#'
 #' @param con Database connection
 #' @param repo_id Repository ID
 #' @param owner Repository owner (username)
 #' @param repo Repository name
 #' @param token GitHub token (optional)
+#'
+#' @return Invisibly returns TRUE if successful, FALSE otherwise
+#'
+#' @examples
+#' \dontrun{
+#' con <- init_db()
+#' save_repo_metadata(con, repo_id = 1, owner = "aaalyaaa", repo = "dbipAnalyzer")
+#' DBI::dbDisconnect(con, shutdown = TRUE)
+#' }
 save_repo_metadata <- function(con, repo_id, owner, repo, token = NULL) {
   metadata <- get_repo_metadata(owner, repo, token)
 
@@ -541,6 +620,12 @@ save_repo_metadata <- function(con, repo_id, owner, repo, token = NULL) {
 #'
 #' @param repo_name Name of the repository to delete
 #' @return Invisibly returns TRUE if deleted, FALSE if not found
+#'
+#' @examples
+#' \dontrun{
+#' delete_repository("dbipAnalyzer")
+#' }
+#'
 #' @export
 delete_repository <- function(repo_name) {
   con <- DBI::dbConnect(duckdb::duckdb(), "git.duckdb")
@@ -567,6 +652,11 @@ delete_repository <- function(repo_name) {
 }
 
 #' Write data to database
+#'
+#' Writes commit history and file changes to the DuckDB database.
+#' Supports incremental updates by only adding new commits when the
+#' repository already exists in the database.
+#'
 #' @param con Database connection (from init_db)
 #' @param repo_name Name of the repository
 #' @param repo_path Path to the repository
@@ -635,12 +725,31 @@ write_repo_to_db <- function(con, repo_name, repo_path) {
 
 #' Run ETL pipeline
 #'
+#' Main entry point for the ETL (Extract, Transform, Load) process.
+#' Clones or updates a Git repository, extracts commit history and code
+#' changes, and loads them into a DuckDB database.
+#'
 #' @param mode 0 = local, 1 = remote
 #' @param repo_url GitHub URL (for mode = 1)
 #' @param local_path Path to local repo (for mode = 0)
 #' @param clone_dir Directory for cloning (for mode = 1, optional)
 #' @param github_token GitHub personal access token (optional, for higher rate limits)
 #' @return List with status, message, repo_path, and db_path
+#'
+#' @examples
+#' \dontrun{
+#' # Local repository
+#' result <- run_etl_pipeline(mode = 0, local_path = "D:/my_repos/project")
+#'
+#' # Remote repository
+#' result <- run_etl_pipeline(
+#'   mode = 1,
+#'   repo_url = "https://github.com/aaalyaaa/dbipAnalyzer.git",
+#'   clone_dir = "D:/repos"
+#' )
+#' print(result$status)
+#' }
+#'
 #' @export
 run_etl_pipeline <- function(mode, repo_url = NULL, local_path = NULL,
                              clone_dir = NULL, github_token = NULL) {
@@ -702,6 +811,12 @@ run_etl_pipeline <- function(mode, repo_url = NULL, local_path = NULL,
 #'
 #' @param db_path Path to the DuckDB database file (default: "git.duckdb")
 #' @return Invisibly returns TRUE
+#'
+#' @examples
+#' \dontrun{
+#' reset_db("git.duckdb")
+#' }
+#'
 #' @export
 reset_db <- function(db_path = "git.duckdb") {
   duckdb::duckdb_shutdown(duckdb::duckdb(db_path))
@@ -780,6 +895,13 @@ list_tables <- function(con = NULL, db_path = "git.duckdb") {
 #' @param columns Character vector of column names to select (default: all columns)
 #' @param db_path Path to the database (used only if con is NULL)
 #' @return A data frame with the requested data
+#'
+#' @examples
+#' \dontrun{
+#' view_table("git_commit_history", limit = 10)
+#' view_table("git_file_changes", columns = c("commit", "src_file"))
+#' }
+#'
 #' @export
 view_table <- function(con = NULL, table_name, limit = 100, columns = NULL, db_path = "git.duckdb") {
   local_con <- FALSE
@@ -821,6 +943,12 @@ view_table <- function(con = NULL, table_name, limit = 100, columns = NULL, db_p
 #' @param table_name Name of the table
 #' @param db_path Path to the database (used only if con is NULL)
 #' @return A data frame with column information
+#'
+#' @examples
+#' \dontrun{
+#' table_info("git_commit_history")
+#' }
+#'
 #' @export
 table_info <- function(con = NULL, table_name, db_path = "git.duckdb") {
   local_con <- FALSE
@@ -847,6 +975,14 @@ table_info <- function(con = NULL, table_name, db_path = "git.duckdb") {
 #' @param con Database connection (if NULL, a temporary connection is created)
 #' @param db_path Path to the database (used only if con is NULL)
 #' @return List with summary information
+#'
+#' @examples
+#' \dontrun{
+#' summary <- db_summary()
+#' print(summary$total_commits)
+#' print(summary$date_range)
+#' }
+#'
 #' @export
 db_summary <- function(con = NULL, db_path = "git.duckdb") {
   local_con <- FALSE

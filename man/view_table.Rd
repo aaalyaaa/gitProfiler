@@ -29,3 +29,10 @@ A data frame with the requested data
 \description{
 Retrieves data from a table, with optional row limit and column selection.
 }
+\examples{
+\dontrun{
+view_table("git_commit_history", limit = 10)
+view_table("git_file_changes", columns = c("commit", "src_file"))
+}
+
+}

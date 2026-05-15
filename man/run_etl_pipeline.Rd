@@ -27,5 +27,22 @@ run_etl_pipeline(
 List with status, message, repo_path, and db_path
 }
 \description{
-Run ETL pipeline
+Main entry point for the ETL (Extract, Transform, Load) process.
+Clones or updates a Git repository, extracts commit history and code
+changes, and loads them into a DuckDB database.
+}
+\examples{
+\dontrun{
+# Local repository
+result <- run_etl_pipeline(mode = 0, local_path = "D:/my_repos/project")
+
+# Remote repository
+result <- run_etl_pipeline(
+  mode = 1,
+  repo_url = "https://github.com/aaalyaaa/dbipAnalyzer.git",
+  clone_dir = "D:/repos"
+)
+print(result$status)
+}
+
 }

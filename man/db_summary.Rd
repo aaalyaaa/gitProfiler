@@ -17,3 +17,11 @@ List with summary information
 \description{
 Get a quick summary of the database
 }
+\examples{
+\dontrun{
+summary <- db_summary()
+print(summary$total_commits)
+print(summary$date_range)
+}
+
+}

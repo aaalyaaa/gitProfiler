@@ -17,6 +17,18 @@ save_repo_metadata(con, repo_id, owner, repo, token = NULL)
 
 \item{token}{GitHub token (optional)}
 }
+\value{
+Invisibly returns TRUE if successful, FALSE otherwise
+}
 \description{
-Save repository metadata to database
+Fetches repository metadata from GitHub API and saves it to the
+repo_metadata table. Updates existing records if the repository
+already exists.
+}
+\examples{
+\dontrun{
+con <- init_db()
+save_repo_metadata(con, repo_id = 1, owner = "aaalyaaa", repo = "dbipAnalyzer")
+DBI::dbDisconnect(con, shutdown = TRUE)
+}
 }

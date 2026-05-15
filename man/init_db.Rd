@@ -20,3 +20,10 @@ Creates three tables:
 \item git_file_changes: stores code changes
 }
 }
+\examples{
+\dontrun{
+con <- init_db("my_data.duckdb")
+DBI::dbListTables(con)
+DBI::dbDisconnect(con, shutdown = TRUE)
+}
+}

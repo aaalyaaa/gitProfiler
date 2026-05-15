@@ -15,3 +15,9 @@ Invisibly returns TRUE
 \description{
 Reset the DuckDB database by deleting the database file and its WAL
 }
+\examples{
+\dontrun{
+reset_db("git.duckdb")
+}
+
+}

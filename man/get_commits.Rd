@@ -13,5 +13,7 @@ get_commits(repo_path)
 List of character vectors, each vector is one commit block
 }
 \description{
-Parse git log -p output into commit blocks
+Reads the output of \verb{git log -p} and splits it into blocks, where each block
+represents one commit with its complete diff information. This is the first
+step before parsing individual commits for code changes.
 }

@@ -17,5 +17,13 @@ get_repo_metadata(owner, repo, token = NULL)
 List with repository metadata
 }
 \description{
-Get repository metadata from GitHub API
+Retrieves metadata about a GitHub repository including stars, forks, language,
+description, license, and timestamps. Makes two API calls (main endpoint and
+languages endpoint). Rate limits: 60/hour without token, 5000/hour with token.
+}
+\examples{
+\dontrun{
+metadata <- get_repo_metadata("aaalyaaa", "dbipAnalyzer")
+cat("Stars:", metadata$stars)
+}
 }

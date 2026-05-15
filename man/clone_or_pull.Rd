@@ -17,7 +17,30 @@ clone_or_pull(mode, repo_url = NULL, clone_dir = NULL, local_path = NULL)
 }
 \value{
 Path to repository
+
+#' @examples
+\dontrun{
+# Local mode
+repo_path <- clone_or_pull(mode = 0, local_path = "D:/my_repos/project")
+
+# Remote mode
+repo_path <- clone_or_pull(
+  mode = 1,
+  repo_url = "https://github.com/aaalyaaa/dbipAnalyzer.git",
+  clone_dir = "D:/repos"
+)
+}
 }
 \description{
-Clone or update a Git repository
+Prepares a Git repository for analysis by cloning from GitHub or updating
+an existing local copy. Performs comprehensive input validation and handles
+both local and remote operation modes with appropriate error messages.
+}
+\details{
+\strong{Local mode (mode = 0):} Uses an existing local Git repository. Validates
+that the path exists and contains a \code{.git} directory, then runs \verb{git pull}.
+
+\strong{Remote mode (mode = 1):} Clones a repository from GitHub. Validates the
+URL format, normalizes it (adds \code{.git} if missing), checks repository
+accessibility via \verb{git ls-remote}, then clones or updates as needed.
 }
